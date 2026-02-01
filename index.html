@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="windows-1251">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Clover Shop - Онлайн магазин</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-success sticky-top">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="bi bi-shop"></i> Smart Clover Shop
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#">Начало</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#products">Продукти</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#about">За нас</a>
+                    </li>
+                    <li class="nav-item">
+                        <button class="btn btn-outline-light position-relative ms-2" onclick="shopApp.showCart()">
+                            <i class="bi bi-cart3"></i> Кошница
+                            <span id="cartCount" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="display: none;">
+                                0
+                            </span>
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <div id="userDisplay" class="ms-2"></div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero-section bg-light py-5">
+        <div class="container text-center">
+            <h1 class="display-4 mb-3">Добре дошли в Smart Clover Shop</h1>
+            <p class="lead mb-4">Качествени продукти на отлични цени</p>
+            <a href="#products" class="btn btn-success btn-lg">
+                <i class="bi bi-bag-check"></i> Разгледай продуктите
+            </a>
+        </div>
+    </section>
+
+    <!-- Filters Section -->
+    <section class="filters-section py-3 bg-white border-bottom">
+        <div class="container">
+            <div class="row align-items-center">
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <span class="input-group-text">
+                            <i class="bi bi-search"></i>
+                        </span>
+                        <input type="text" id="searchInput" class="form-control" placeholder="Търси продукт...">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <select id="sortSelect" class="form-select">
+                        <option value="default">Сортирай по: По подразбиране</option>
+                        <option value="price-asc">Цена: Ниска към висока</option>
+                        <option value="price-desc">Цена: Висока към ниска</option>
+                        <option value="name-asc">Име: А-Я</option>
+                        <option value="name-desc">Име: Я-А</option>
+                    </select>
+                </div>
+                <div class="col-md-4 text-end">
+                    <span class="badge bg-success" id="productCount">0 продукта</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Products Section -->
+    <section id="products" class="products-section py-5">
+        <div class="container">
+            <h2 class="text-center mb-5">Нашите продукти</h2>
+            
+            <!-- Loading Spinner -->
+            <div id="loadingSpinner" class="text-center py-4">
+                <div class="spinner-border text-success" role="status">
+                    <span class="visually-hidden">Зареждане...</span>
+                </div>
+                <p class="mt-3">Зареждане на продукти...</p>
+            </div>
+
+            <!-- Products Grid -->
+            <div id="productsGrid" class="row g-4">
+                <!-- Products will be loaded here by JavaScript -->
+            </div>
+
+            <!-- No Results Message -->
+            <div id="noResults" class="text-center d-none">
+                <i class="bi bi-inbox display-1 text-muted"></i>
+                <p class="lead mt-3">Няма намерени продукти</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- About Section -->
+    <section id="about" class="about-section py-5 bg-light">
+        <div class="container">
+            <div class="row align-items-center">
+                <div class="col-md-6">
+                    <h2 class="mb-4">За Smart Clover Shop</h2>
+                    <p class="lead">Вашият надежден партньор за качествени продукти.</p>
+                    <p>Нашият магазин предлага широка гама от продукти, интегрирани директно с нашата складова система за актуални цени и наличности.</p>
+                    <ul class="list-unstyled">
+                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> Актуални цени в реално време</li>
+                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> Проверена наличност</li>
+                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> Качествени продукти</li>
+                        <li class="mb-2"><i class="bi bi-check-circle-fill text-success me-2"></i> Професионално обслужване</li>
+                    </ul>
+                </div>
+                <div class="col-md-6 text-center">
+                    <i class="bi bi-box-seam display-1 text-success"></i>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-dark text-white py-4">
+        <div class="container text-center">
+            <p class="mb-0">&copy; 2026 Smart Clover Shop. Всички права запазени.</p>
+            <p class="mb-0 small mt-2">Интегрирано със складова система</p>
+        </div>
+    </footer>
+
+    <!-- User Login/Register Modal -->
+    <div class="modal fade" id="userModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-person-circle"></i> Вход в профила</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="userForm" onsubmit="event.preventDefault(); shopApp.loginUser(
+                        document.getElementById('userName').value,
+                        document.getElementById('userPhone').value,
+                        document.getElementById('userEmail').value,
+                        document.getElementById('userAddress').value
+                    );">
+                        <div class="mb-3">
+                            <label for="userName" class="form-label">Име и фамилия *</label>
+                            <input type="text" class="form-control" id="userName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="userPhone" class="form-label">Телефон *</label>
+                            <input type="tel" class="form-control" id="userPhone" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="userEmail" class="form-label">Email *</label>
+                            <input type="email" class="form-control" id="userEmail" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="userAddress" class="form-label">Адрес за доставка *</label>
+                            <textarea class="form-control" id="userAddress" rows="3" required></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-success w-100">
+                            <i class="bi bi-check-circle"></i> Запази
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cart Modal -->
+    <div class="modal fade" id="cartModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-cart3"></i> Моята кошница</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="cartItems"></div>
+                </div>
+                <div class="modal-footer">
+                    <div class="w-100 d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Общо: <span id="cartTotal">0.00</span> BGN</h5>
+                        <button type="button" class="btn btn-success" onclick="shopApp.proceedToCheckout()">
+                            <i class="bi bi-check-circle"></i> Поръчай
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Checkout Modal -->
+    <div class="modal fade" id="checkoutModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="bi bi-bag-check"></i> Финализиране на поръчката</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <h6 class="mb-3">Продукти в поръчката:</h6>
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Продукт</th>
+                                <th class="text-center">Кол.</th>
+                                <th class="text-end">Цена</th>
+                                <th class="text-end">Общо</th>
+                            </tr>
+                        </thead>
+                        <tbody id="checkoutItems"></tbody>
+                        <tfoot>
+                            <tr>
+                                <th colspan="3" class="text-end">ОБЩО:</th>
+                                <th class="text-end"><span id="checkoutTotal">0.00</span> BGN</th>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    
+                    <hr>
+                    
+                    <h6 class="mb-3">Данни за доставка:</h6>
+                    <form id="checkoutForm" onsubmit="event.preventDefault(); shopApp.submitOrder();">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="orderName" class="form-label">Име и фамилия</label>
+                                <input type="text" class="form-control" id="orderName" readonly>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="orderPhone" class="form-label">Телефон</label>
+                                <input type="tel" class="form-control" id="orderPhone" readonly>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label for="orderEmail" class="form-label">Email</label>
+                                <input type="email" class="form-control" id="orderEmail" readonly>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="orderAddress" class="form-label">Адрес</label>
+                                <textarea class="form-control" id="orderAddress" rows="2" readonly></textarea>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="orderNotes" class="form-label">Забележки към поръчката (по желание)</label>
+                            <textarea class="form-control" id="orderNotes" rows="3" placeholder="Добавете забележки..."></textarea>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-success btn-lg">
+                                <i class="bi bi-check2-circle"></i> Потвърди поръчката
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Customer Selection Modal -->
+    <div class="modal fade" id="customerSelectModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title">
+                        <i class="bi bi-people"></i> Избери клиент
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <input type="text" class="form-control" id="customerSearch" placeholder="Търси по име, телефон или email...">
+                    </div>
+                    <div id="customerList" class="list-group" style="max-height: 400px; overflow-y: auto;">
+                        <!-- Customers will be loaded here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scroll to Top Button -->
+    <div class="scroll-to-top" id="scrollToTop" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">
+        <i class="bi bi-arrow-up"></i>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/xml-parser.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

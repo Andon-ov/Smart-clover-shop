@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="windows-1251"?>
+<COMMANDS>				<!-- Файл съдържащ команди за изпълнение  -->
+  <COMMAND>				<!-- Секция за команда - един файл може да съдържа множество команди -->
+    <ID>1234ABC1</ID>			<!-- след изпълнението на командата в резултатния файл се попълва това ID. Незадължителен параметър. -->
+    <CNAME>FILTERSUPPLIES</CNAME>	<!-- FILTERSUPPLIES, FILTERSALES и тнт -  Типове команди..... -->
+    <PARAMS>				<!-- Параметри към командата - зависят от CNAME -->
+      <DATEFROM>20130318</DATEFROM>	<!-- начлана дата -->
+      <DATETO>20130319</DATETO>		<!-- крайна дата -->
+    </PARAMS>
+  </COMMAND>
+  <COMMAND>
+    <CNAME>FILTERSALES</CNAME>		<!--FILTERSUPPLIES, FILTERSALES и тнт -  Типове команди..... -->
+    <PARAMS>				<!--параметри към командата - зависят от CNAME -->
+      <DATEFROM>20130318</DATEFROM>
+      <DATETO>20130319</DATETO>
+    </PARAMS>
+  </COMMAND>
+</COMMANDS>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="WINDOWS-1251"?>
+<USERS>
+    <USR>
+        <UID>1</UID>
+        <LVL>C</LVL>
+        <UNME>username</UNME>
+        <UPAS>password</UPAS>
+        <NAME>Име на касиера</NAME>
+        <PERM>100011110101101010110011</PERM>
+    </USR>
+</USERS>
