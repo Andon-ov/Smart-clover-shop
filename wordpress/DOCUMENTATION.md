@@ -147,51 +147,216 @@ EboIn_Order{id}_{timestamp}.xml   ← преименува се атомарно
 
 ---
 
-## Инструкции за стартиране
+## Инструкции за инсталиране и стартиране
 
-### 1. Конфигурация
+### Предварителни изисквания
+
+На сървъра трябва да са инсталирани:
+
+| Инструмент | Минимална версия | Проверка |
+|------------|-----------------|----------|
+| Docker Engine | 24+ | `docker --version` |
+| Docker Compose (plugin) | 2.20+ | `docker compose version` |
+| Git | всяка | `git --version` |
+
+---
+
+### Стъпка 1 – Клониране на репозиторито
 
 ```bash
-cd wordpress
-cp .env.example .env
+git clone https://github.com/Andon-ov/Smart-clover-shop.git
+cd Smart-clover-shop/wordpress
 ```
 
-Редактирайте `.env`:
-- Сменете всички `change_me_*` пароли
-- Генерирайте WooCommerce REST API ключове: **WooCommerce → Settings → Advanced → REST API**
-- Генерирайте webhook secret: `openssl rand -base64 32`
+---
 
-### 2. Стартиране
+### Стъпка 2 – Конфигурация на средата
+
+```bash
+cp .env.example .env
+nano .env          # или vim .env
+```
+
+Попълнете **всички** стойности:
+
+```env
+# Сменете всички пароли с реални, случайни стойности
+MYSQL_ROOT_PASSWORD=...
+MYSQL_DATABASE=wordpress
+MYSQL_USER=...
+MYSQL_PASSWORD=...
+
+POSTGRES_DB=sync_bridge
+POSTGRES_USER=...
+POSTGRES_PASSWORD=...
+
+FTP_PUBLIC_HOST=<IP на сървъра>   # вижте как да го намерите по-долу
+FTP_USER_NAME=detelina
+FTP_USER_PASS=...
+
+# Тези два се попълват след стъпка 5!
+WP_KEY=
+WP_SECRET=
+
+# Генерирайте с: openssl rand -base64 32
+WEBHOOK_SECRET=...
+```
+
+> **Важно:** `FTP_PUBLIC_HOST` трябва да е публичният IP на сървъра, не `localhost`. Детелина ползва passive FTP и се свързва към него отвън.
+
+#### Как да намерите публичния IP на сървъра
+
+Влезте в сървъра по SSH и изпълнете една от следните команди:
+
+```bash
+# Метод 1 – през външна услуга (най-надежден)
+curl -s ifconfig.me
+
+# Метод 2 – алтернативна услуга
+curl -s icanhazip.com
+
+# Метод 3 – ако горните не работят (изисква инсталиран dnsutils)
+dig +short myip.opendns.com @resolver1.opendns.com
+```
+
+Изходът ще бъде нещо от вида `94.26.xx.xx` – това е стойността, която трябва да се постави в `FTP_PUBLIC_HOST`.
+
+> Ако сървърът е зад NAT (рядко при VPS), публичният IP се вижда в контролния панел на хостинг доставчика, а не от командния ред.
+
+---
+
+### Стъпка 3 – Първо стартиране на контейнерите
 
 ```bash
 docker compose up -d
 ```
 
-Контейнерите се стартират в правилен ред чрез `healthcheck` условия:
-- `db_wp` и `db_sync` трябва да са healthy преди WordPress / Sync Engine да стартират
-- WordPress трябва да е healthy преди Sync Engine да стартира
+Проверете дали всички контейнери са стартирали успешно:
 
-### 3. Конфигурация на WordPress
+```bash
+docker compose ps
+```
 
-1. Отворете `http://localhost:8082` и завършете инсталацията на WordPress
-2. Инсталирайте и активирайте **WooCommerce**
-3. В **WooCommerce → Settings → Advanced → REST API** създайте ключ с Read/Write права
-4. Поставете ключовете в `.env` като `WP_KEY` и `WP_SECRET`
-5. Рестартирайте sync engine: `docker compose restart sync_engine`
+Очакван резултат — всички услуги трябва да достигнат `healthy` или `running`:
 
-Sync Engine автоматично регистрира webhook-а при следващото стартиране.
+```
+NAME                STATUS
+clvr_db_wp          healthy
+clvr_db_sync        healthy
+clvr_wordpress      healthy
+clvr_ftp            running
+clvr_sync_engine    running
+```
 
-### 4. Конфигурация на Детелина
+> Контейнерите се стартират в правилен ред автоматично чрез `healthcheck` условия. `clvr_sync_engine` изчаква PostgreSQL и WordPress да са готови преди да стартира.
+
+Ако даден контейнер не стартира, прегледайте логовете му:
+
+```bash
+docker compose logs clvr_sync_engine --tail=50
+docker compose logs clvr_wordpress   --tail=50
+```
+
+---
+
+### Стъпка 4 – Инсталиране на WordPress
+
+1. Отворете `http://<IP-на-сървъра>:8082` в браузър
+2. Изберете език и попълнете:
+   - **Site Title** – напр. `Smart Clover Shop`
+   - **Username / Password** – запомнете ги
+   - **Email** – администраторски имейл
+3. Натиснете **Install WordPress** и влезте в админ панела
+
+---
+
+### Стъпка 5 – Инсталиране и конфигурация на WooCommerce
+
+1. В WordPress admin: **Plugins → Add New → Search** → намерете `WooCommerce` → **Install Now → Activate**
+2. Преминете през Setup Wizard на WooCommerce (валута: BGN, страна: Bulgaria)
+3. В **WooCommerce → Settings → Advanced → REST API** натиснете **Add Key**:
+   - Description: `Sync Engine`
+   - User: администраторът
+   - Permissions: **Read/Write**
+   - Натиснете **Generate API Key**
+4. Копирайте **Consumer Key** и **Consumer Secret** в `.env`:
+   ```env
+   WP_KEY=ck_xxxxxxxxxxxxxxxxxxxx
+   WP_SECRET=cs_xxxxxxxxxxxxxxxxxxxx
+   ```
+
+---
+
+### Стъпка 6 – Свързване на Sync Engine с WooCommerce
+
+След попълване на API ключовете рестартирайте Sync Engine:
+
+```bash
+docker compose restart sync_engine
+```
+
+При стартиране Sync Engine автоматично:
+- изчаква PostgreSQL и WordPress да са достъпни
+- създава PostgreSQL схемата (`processed_files`, `plu_mapping`, `sync_errors`, `exported_orders`)
+- регистрира WooCommerce webhook за `order.updated`
+
+Проверете логовете, за да потвърдите успешна инициализация:
+
+```bash
+docker compose logs sync_engine --tail=30
+```
+
+Очаквани редове:
+```
+[INFO] Database schema ready.
+[INFO] Watching ./transfer/in for inbound XML files.
+[INFO] Webhook server listening on :3000
+[INFO] WooCommerce webhook registered → http://sync_engine:3000/webhook/order
+[INFO] Order export poll interval: 120s
+```
+
+---
+
+### Стъпка 7 – Конфигурация на Детелина
 
 Настройте FTP плъгина в Детелина:
 
 | Параметър | Стойност |
 |-----------|---------|
-| Host | IP на Docker хоста |
+| Host | публичният IP на сървъра |
 | Port | `21` |
 | User | стойността на `FTP_USER_NAME` от `.env` |
 | Pass | стойността на `FTP_USER_PASS` от `.env` |
 | Passive ports | `30000–30009` |
+| Upload директория | `/in` |
+| Download директория | `/out` |
+
+> FTP passive режим използва портове `30000–30009`. Уверете се, че защитната стена на сървъра ги позволява заедно с порт `21`.
+
+---
+
+### Полезни команди за поддръжка
+
+```bash
+# Спиране на всички контейнери на проекта
+docker compose down
+
+# Спиране и изтриване на данните (ВНИМАНИЕ: изтрива базите!)
+docker compose down -v
+
+# Преглед на логове в реално време
+docker compose logs -f
+
+# Логове само на sync engine
+docker compose logs -f sync_engine
+
+# Рестартиране на конкретен контейнер
+docker compose restart sync_engine
+
+# Обновяване след промяна на код в sync-engine/
+docker compose build sync_engine
+docker compose up -d sync_engine
+```
 
 ---
 
