@@ -76,7 +76,7 @@ services:
 
   # FTP Server for Detelina XML Exchange
   ftp_server:
-    image: stilliard/pure-ftpd:hardened
+    image: stilliard/pure-ftpd:latest-hardened
     container_name: clvr_ftp
     ports:
       - "21:21"
