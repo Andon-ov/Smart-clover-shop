@@ -335,7 +335,164 @@ docker compose logs sync_engine --tail=30
 
 ---
 
-### Полезни команди за поддръжка
+## Двупосочна комуникация с Детелина
+
+### Посока 1 — Детелина → WooCommerce (внасяне на продукти)
+
+#### Как работи
+
+Детелина генерира PLUDATA XML файл и го качва в `/in` директорията чрез FTP. Sync Engine хваща файла в рамките на секунди, парсва го и прави upsert на продуктите в WooCommerce.
+
+| XML поле | Задължително | Какво прави в WooCommerce |
+|----------|-------------|--------------------------|
+| `PLUNB` | ✅ | Уникален ID — ако вече е внесен, продуктът се **обновява**; иначе се **създава** |
+| `PLUNM` | ✅ | Наименование на продукта |
+| `SLPRC` | ✅ | Продажна цена (`regular_price`) |
+| `PLUNN` | не | SKU / баркод |
+| `DELETED` | не | `1` = деактивира продукта; `0` = публикуван |
+| `GRP` → `GRP` → `GNМ` | не | Най-дълбоката група → WooCommerce категория (създава се автоматично) |
+
+> **Внимание:** Буквата в тага `GNМ` е **кирилска М** (от оригиналния Детелина формат), не латинска.
+
+#### Работещ XML шаблон
+
+Детелина генерира файловете с `encoding="windows-1251"` — Sync Engine го разпознава и конвертира автоматично. При ръчно създаден файл може да се използва UTF-8:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<PLUDATA>
+
+  <PLU>
+    <PLUNB>1</PLUNB>
+    <PLUNN>BARCODE-001</PLUNN>
+    <PLUNM>Тестов продукт 1</PLUNM>
+    <SLPRC>19.99</SLPRC>
+    <SLCUR>BGN</SLCUR>
+    <DELETED>0</DELETED>
+    <GRP>
+      <GNМ>Козметика</GNМ>
+      <GRP>
+        <GNМ>Шампоани</GNМ>
+      </GRP>
+    </GRP>
+  </PLU>
+
+  <PLU>
+    <PLUNB>2</PLUNB>
+    <PLUNN>BARCODE-002</PLUNN>
+    <PLUNM>Тестов продукт 2</PLUNM>
+    <SLPRC>34.50</SLPRC>
+    <SLCUR>BGN</SLCUR>
+    <DELETED>0</DELETED>
+    <GRP>
+      <GNМ>Козметика</GNМ>
+      <GRP>
+        <GNМ>Маски</GNМ>
+      </GRP>
+    </GRP>
+  </PLU>
+
+</PLUDATA>
+```
+
+#### Как да пуснете файла
+
+**Чрез FTP (реалният работен поток от Детелина):**
+
+```
+Host:              <IP на сървъра>
+Port:              21
+User:              стойността на FTP_USER_NAME от .env
+Pass:              стойността на FTP_USER_PASS от .env
+Режим:             Passive
+Директория:        /in
+```
+
+**Директно на сървъра (за бърз тест):**
+
+```bash
+cp EboIn_PluData_test.xml ~/GitHub/Smart-clover-shop/wordpress/transfer/in/
+```
+
+#### Как да проверите резултата
+
+```bash
+docker compose -f ~/GitHub/Smart-clover-shop/wordpress/docker-compose.yml logs -f sync_engine
+```
+
+При успех:
+```
+[INFO] Processing inbound: EboIn_PluData_test.xml
+[INFO] Created WC product #5 for PLU 1
+[INFO] Created WC product #6 for PLU 2
+[INFO] Done: EboIn_PluData_test.xml
+```
+
+Файлът изчезва от `transfer/in/` и се появява в `transfer/archive/`. При грешка се преименува на `.err`.
+
+---
+
+### Посока 2 — WooCommerce → Детелина (изпращане на поръчки)
+
+#### Как работи
+
+Когато клиент плати поръчка в WooCommerce (статус `processing`), Sync Engine:
+
+1. Получава веднага известие чрез WooCommerce webhook (`order.updated`)
+2. Генерира RDELIV XML файл
+3. Записва го в `transfer/out/` като `.tmp`, след което го преименува атомарно на `.xml`
+4. Детелина го изтегля от `/out` директорията чрез FTP
+5. Поръчката в WooCommerce се маркира като `on-hold`
+
+Ако webhook-ът е бил недостъпен, polling fallback проверява за нови поръчки на всеки 2 минути.
+
+#### Необходими мета данни в поръчката
+
+За да се генерира коректен RDELIV XML, продуктите в WooCommerce трябва да имат записан Детелина вътрешен код. Той се задава автоматично при PLUDATA импорт и се съхранява като WordPress product meta:
+
+| Meta ключ | Стойност | Откъде идва |
+|-----------|---------|-------------|
+| `_detelina_nb` | `PLUNB` на артикула | Задава се автоматично при PLUDATA импорт |
+| `_billing_eik` | ЕИК на клиента | Добавя се в checkout формата чрез плъгин |
+
+> Ако `_billing_eik` липсва, за SEIK се използва `billing.company` от поръчката. Препоръчително е да се добави поле за ЕИК в checkout формата чрез плъгин (напр. **Flexible Checkout Fields for WooCommerce**).
+
+#### Структура на генерирания файл
+
+```
+transfer/out/EboIn_Order{wc_id}_{timestamp}.xml
+```
+
+```xml
+<?xml version="1.0" encoding="WINDOWS-1251"?>
+<RDELIV>
+  <REQD>
+    <TYP>1</TYP>
+    <SEIK>123456789</SEIK>
+    <DNMB>42</DNMB>
+    <CMNT>WooCommerce order #42 – Иван Иванов</CMNT>
+    <DDATE>20260306</DDATE>
+    <DTIME>143022</DTIME>
+    <STORG>1</STORG>
+    <PLUES>
+      <PLU>
+        <PLUNB>1</PLUNB>
+        <PLUNN>BARCODE-001</PLUNN>
+        <QTY>2.000</QTY>
+        <PRC>19.99</PRC>
+        <CURR>BGN</CURR>
+        <PCMNT></PCMNT>
+      </PLU>
+    </PLUES>
+  </REQD>
+</RDELIV>
+```
+
+#### Конфигурация на Детелина за изтегляне на поръчки
+
+В Детелина настройте периодично изтегляне от FTP директорията `/out`. Обработеният файл се преименува от Детелина на `.proc` след успешен импорт.
+
+
 
 ```bash
 # Спиране на всички контейнери на проекта
