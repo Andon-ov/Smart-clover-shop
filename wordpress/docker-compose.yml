@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Database for WordPress (MariaDB)
+  db_wp:
+    image: mariadb:10.11
+    container_name: clvr_db_wp
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wp_user
+      MYSQL_PASSWORD: wp_password
+    volumes:
+      - ./docker/mysql_data:/var/lib/mysql
+
+  # Database for Sync Engine (PostgreSQL)
+  db_sync:
+    image: postgres:15-alpine
+    container_name: clvr_db_sync
+    restart: always
+    environment:
+      POSTGRES_DB: sync_bridge
+      POSTGRES_USER: sync_user
+      POSTGRES_PASSWORD: sync_password
+    volumes:
+      - ./docker/postgres_data:/var/lib/postgresql/data
+
+  # WordPress + WooCommerce
+  wordpress:
+    image: wordpress:latest
+    container_name: clvr_wordpress
+    depends_on:
+      - db_wp
+    restart: always
+    ports:
+      - "8080:80"
+    environment:
+      WORDPRESS_DB_HOST: db_wp
+      WORDPRESS_DB_USER: wp_user
+      WORDPRESS_DB_PASSWORD: wp_password
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - ./wp-content:/var/www/html/wp-content
+
+  # FTP Server for Detelina XML Exchange
+  ftp_server:
+    image: stilliard/pure-ftpd:latest
+    container_name: clvr_ftp
+    ports:
+      - "21:21"
+      - "30000-30009:30000-30009"
+    volumes:
+      - ./transfer:/home/ftpuser/detelina
+    environment:
+      PUBLICHOST: localhost
+      FTP_USER_NAME: detelina
+      FTP_USER_PASS: clover_pass
+      FTP_USER_HOME: /home/ftpuser/detelina
+    restart: always
+
+  # Custom Sync Engine (Node.js/Python)
+  sync_engine:
+    build: ./sync-engine
+    container_name: clvr_sync_engine
+    depends_on:
+      - db_sync
+      - wordpress
+    volumes:
+      - ./sync-engine:/usr/src/app
+      - ./transfer:/usr/src/app/transfer
+    environment:
+      DB_SYNC_HOST: db_sync
+      DB_SYNC_USER: sync_user
+      DB_SYNC_PASS: sync_password
+      DB_SYNC_NAME: sync_bridge
+      WP_API_URL: http://wordpress/wp-json/wc/v3
+      WP_CONSUMER_KEY: ${WP_KEY}
+      WP_CONSUMER_SECRET: ${WP_SECRET}
+    restart: always

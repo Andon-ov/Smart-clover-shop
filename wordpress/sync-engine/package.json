@@ -1,0 +1,16 @@
+{
+  "name": "clover-sync-engine",
+  "version": "1.0.0",
+  "description": "Integration bridge between Detelina XML and WooCommerce",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.0",
+    "axios": "^1.4.0",
+    "xml2js": "^0.6.0",
+    "chokidar": "^3.5.3",
+    "iconv-lite": "^0.6.3"
+  }
+}
