@@ -1,0 +1,23 @@
+# Secrets - never commit
+.env
+
+# Runtime database data
+docker/mysql_data/
+docker/postgres_data/
+
+# Runtime transfer files (processed at runtime)
+transfer/in/*
+transfer/out/*
+transfer/archive/*
+
+# Keep directory structure
+!transfer/in/.gitkeep
+!transfer/out/.gitkeep
+!transfer/archive/.gitkeep
+
+# WordPress uploads and auto-generated files
+wp-content/uploads/
+wp-content/upgrade/
+
+# Node.js
+sync-engine/node_modules/

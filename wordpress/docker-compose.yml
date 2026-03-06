@@ -1,51 +1,75 @@
-version: '3.8'
-
 services:
   # Database for WordPress (MariaDB)
   db_wp:
     image: mariadb:10.11
     container_name: clvr_db_wp
-    restart: always
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root_password
-      MYSQL_DATABASE: wordpress
-      MYSQL_USER: wp_user
-      MYSQL_PASSWORD: wp_password
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - ./docker/mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - wp_net
 
   # Database for Sync Engine (PostgreSQL)
   db_sync:
     image: postgres:15-alpine
     container_name: clvr_db_sync
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: sync_bridge
-      POSTGRES_USER: sync_user
-      POSTGRES_PASSWORD: sync_password
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./docker/postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - sync_net
 
   # WordPress + WooCommerce
   wordpress:
-    image: wordpress:latest
+    image: wordpress:6.5-php8.2-apache
     container_name: clvr_wordpress
     depends_on:
-      - db_wp
-    restart: always
+      db_wp:
+        condition: service_healthy
+    restart: unless-stopped
     ports:
-      - "8080:80"
+      - "8082:80"
     environment:
       WORDPRESS_DB_HOST: db_wp
-      WORDPRESS_DB_USER: wp_user
-      WORDPRESS_DB_PASSWORD: wp_password
-      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
     volumes:
       - ./wp-content:/var/www/html/wp-content
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost/wp-login.php || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - wp_net
+      - sync_net
 
   # FTP Server for Detelina XML Exchange
   ftp_server:
-    image: stilliard/pure-ftpd:latest
+    image: stilliard/pure-ftpd:hardened
     container_name: clvr_ftp
     ports:
       - "21:21"
@@ -53,28 +77,51 @@ services:
     volumes:
       - ./transfer:/home/ftpuser/detelina
     environment:
-      PUBLICHOST: localhost
-      FTP_USER_NAME: detelina
-      FTP_USER_PASS: clover_pass
+      PUBLICHOST: ${FTP_PUBLIC_HOST:-localhost}
+      FTP_USER_NAME: ${FTP_USER_NAME}
+      FTP_USER_PASS: ${FTP_USER_PASS}
       FTP_USER_HOME: /home/ftpuser/detelina
-    restart: always
+    restart: unless-stopped
+    networks:
+      - ftp_net
 
-  # Custom Sync Engine (Node.js/Python)
+  # Custom Sync Engine (Node.js)
   sync_engine:
-    build: ./sync-engine
+    build:
+      context: ./sync-engine
+      dockerfile: Dockerfile
     container_name: clvr_sync_engine
     depends_on:
-      - db_sync
-      - wordpress
+      db_sync:
+        condition: service_healthy
+      wordpress:
+        condition: service_healthy
     volumes:
-      - ./sync-engine:/usr/src/app
       - ./transfer:/usr/src/app/transfer
     environment:
       DB_SYNC_HOST: db_sync
-      DB_SYNC_USER: sync_user
-      DB_SYNC_PASS: sync_password
-      DB_SYNC_NAME: sync_bridge
+      DB_SYNC_USER: ${POSTGRES_USER}
+      DB_SYNC_PASS: ${POSTGRES_PASSWORD}
+      DB_SYNC_NAME: ${POSTGRES_DB}
       WP_API_URL: http://wordpress/wp-json/wc/v3
       WP_CONSUMER_KEY: ${WP_KEY}
       WP_CONSUMER_SECRET: ${WP_SECRET}
-    restart: always
+      # Webhook receiver – reachable by WordPress inside the sync_net network
+      WEBHOOK_PORT: 3000
+      WEBHOOK_DELIVERY_URL: http://sync_engine:3000/webhook/order
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET}
+      # How often the polling fallback runs (ms); webhook handles real-time delivery
+      ORDER_POLL_INTERVAL_MS: 120000
+      NODE_ENV: production
+    restart: unless-stopped
+    networks:
+      - sync_net
+      - ftp_net
+
+networks:
+  wp_net:
+    driver: bridge
+  sync_net:
+    driver: bridge
+  ftp_net:
+    driver: bridge
