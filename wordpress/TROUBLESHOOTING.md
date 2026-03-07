@@ -635,6 +635,55 @@ Fix в `index.js` + reprocess на PLU файл (вижи проблем 18 за
 
 ---
 
+## 20. WooCommerce REST API връща 400 — `stock_quantity is not of type integer`
+
+### Симптом
+```
+sync_engine | WC error body: { code: 'rest_invalid_param', message: 'Invalid parameter(s): stock_quantity',
+  data: { status: 400, params: { stock_quantity: 'stock_quantity is not of type integer.' } } }
+```
+Продуктът се прескача, количеството не се записва.
+
+### Причина
+WooCommerce REST API изисква `stock_quantity` да е **цяло число** (integer). В PLU XML-а на Detelina стойностите на `PQTTY` са десетични (`1.500`, `4.500`). `parseFloat()` + `Math.max()` връщат float — WC отхвърля с 400.
+
+```javascript
+// ГРЕШНО — може да върне 1.5, 4.5...
+stock_quantity: Math.max(0, pqtty)
+
+// ПРАВИЛНО — закръгля до цяло число:
+stock_quantity: Math.round(Math.max(0, pqtty))
+```
+
+### Засегнати места в `index.js`
+1. `processPludata()` — при създаване/обновяване на продукт от PLU файл
+2. POSSALES обработка — при намаляване на количество при продажба:
+   ```javascript
+   // ГРЕШНО:
+   const newStock = Math.max(0, currentStock - qty);
+   // ПРАВИЛНО:
+   const newStock = Math.round(Math.max(0, currentStock - qty));
+   ```
+
+### Диагноза
+```bash
+# Провери дали продуктите имат stock и manage_stock след reprocess:
+docker exec clvr_db_wp mysql -u wp_user -pchange_me_wp wordpress \
+  -e "SELECT p.post_title,
+      MAX(CASE WHEN pm.meta_key='_stock' THEN pm.meta_value END) as stock,
+      MAX(CASE WHEN pm.meta_key='_manage_stock' THEN pm.meta_value END) as manage
+      FROM wp_posts p JOIN wp_postmeta pm ON p.ID=pm.post_id
+      WHERE p.post_type='product' GROUP BY p.ID LIMIT 10;"
+```
+Ако `manage=yes` и `stock` има цифра — всичко е наред.
+
+### Решение
+Приложи `Math.round()` на двете места + reprocess PLU файл (вижи проблем 18).
+
+**Статус: ✅ Решен** — commit `e47bd80`. Всички продукти получават `manage_stock=yes` и цели числа за наличност.
+
+---
+
 ## Бързо ре-деплойване след `git pull`
 
 ```bash
