@@ -528,6 +528,113 @@ docker compose up -d --no-deps --force-recreate sync_engine
 
 ---
 
+## 18. Продуктите не показват количество — само "In stock"
+
+### Симптом
+WooCommerce показва "In stock" на всички продукти без конкретно число, въпреки че настройката "Stock display format" е "Always show quantity remaining".
+
+### Причина
+Два отделни проблема:
+
+**а) `_manage_stock = no` per продукт**
+WooCommerce има две нива на stock management — глобално и per-продукт. `processPludata()` изпращаше само `stock_quantity` към WC API, но не и `manage_stock: true`. По подразбиране WC създава продукти с `manage_stock = no`, което означава "не следи количество" — игнорира `stock_quantity`.
+
+**б) `_stock = NULL` в базата**
+`_manage_stock` беше сменено на `yes` ръчно, но `_stock` стойността никога не беше записана — оставаше `NULL`, затова WC показваше "In stock" без число.
+
+**в) `PQTTY` не се четеше при create/update**
+`processPludata()` не включваше `pqtty` (количеството от Detelina XML) в `productData` обекта.
+
+### Решение
+
+**Код — `processPludata()` в `index.js`:**
+```javascript
+const pqtty = parseFloat(plu.PQTTY || '0');
+
+const productData = {
+  name:           plunm,
+  regular_price:  price,
+  status:         deleted ? 'trash' : 'publish',
+  sku:            String(plu.PLUNN || plunb),
+  manage_stock:   true,          // ← задължително!
+  stock_quantity: Math.max(0, pqtty),  // ← от PQTTY в XML
+  ...(categoryId ? { categories: [{ id: categoryId }] } : {}),
+};
+```
+
+**Код — POSSALES stock update:**
+```javascript
+// Преди (пропускаше продукти без manage_stock):
+const currentStock = prodRes.data.stock_quantity;
+if (currentStock === null || currentStock === undefined) continue;
+await wcApi('put', `products/${wcId}`, { stock_quantity: newStock });
+
+// След:
+const currentStock = prodRes.data.stock_quantity ?? 0;
+await wcApi('put', `products/${wcId}`, { manage_stock: true, stock_quantity: newStock });
+```
+
+**Еднократен fix на съществуващи продукти в DB:**
+```bash
+docker exec clvr_db_wp mysql -u wp_user -pchange_me_wp wordpress \
+  -e "UPDATE wp_postmeta SET meta_value='yes' WHERE meta_key='_manage_stock';"
+```
+
+**Изчисти WC transient кеша:**
+```bash
+docker exec clvr_db_wp mysql -u wp_user -pchange_me_wp wordpress \
+  -e "DELETE FROM wp_options WHERE option_name LIKE '_transient_%' OR option_name LIKE '_site_transient_%';"
+```
+
+**Reprocess на PLU файл** (за да се запишат `_stock` стойностите):
+```bash
+# Изчисти историята на обработените PLU файлове
+docker exec clvr_db_sync psql -U sync_user -d sync_bridge \
+  -c "DELETE FROM processed_files WHERE filename LIKE '%PLU%';"
+
+# Копирай архивирания файл обратно в transfer/ root
+cp ~/GitHub/Smart-clover-shop/wordpress/transfer/archive/EboOut_PLU.xml \
+   ~/GitHub/Smart-clover-shop/wordpress/transfer/EboOut_PLU_reprocess.xml
+```
+
+**Статус: ✅ Решен** — след reprocess на PLU файл продуктите показват конкретни количества.
+
+---
+
+## 19. Категориите показват "Uncategorized" — не се синхронизират от Detelina
+
+### Симптом
+Всички продукти са в категория "Uncategorized" въпреки че в PLU XML-а имат групи (GRP/GNM).
+
+### Причина
+В `processPludata()` полето за категория се четеше с **кирилска буква М** (`grp.GNМ` — Unicode U+041C) вместо латинска (`grp.GNM` — U+004D). XML парсерът връща ключовете точно такива, каквито са в XML файла. Тъй като XML-ът на Detelina ползва латинско `GNM`, кодът никога не намираше категорията.
+
+```javascript
+// ГРЕШНО — кирилска M:
+const categoryName = grp && grp.GNМ ? grp.GNМ : null;
+
+// ПРАВИЛНО — толерира и двете (латинска и кирилска M):
+const categoryName = grp && (grp.GNM || grp.GNМ) ? (grp.GNM || grp.GNМ) : null;
+```
+
+### Диагноза
+```bash
+# Провери дали категориите са nil в DB:
+docker exec clvr_db_wp mysql -u wp_user -pchange_me_wp wordpress \
+  -e "SELECT p.post_title, t.name as category FROM wp_posts p
+      LEFT JOIN wp_term_relationships tr ON p.ID=tr.object_id
+      LEFT JOIN wp_term_taxonomy tt ON tr.term_taxonomy_id=tt.term_taxonomy_id AND tt.taxonomy='product_cat'
+      LEFT JOIN wp_terms t ON tt.term_id=t.term_id
+      WHERE p.post_type='product' AND p.post_status='publish' LIMIT 5;"
+```
+
+### Решение
+Fix в `index.js` + reprocess на PLU файл (вижи проблем 18 за reprocess стъпките).
+
+**Статус: ✅ Решен в код** — категориите ще се оправят при следващ PLUDATA файл от Detelina или при ръчен reprocess.
+
+---
+
 ## Бързо ре-деплойване след `git pull`
 
 ```bash
