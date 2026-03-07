@@ -399,9 +399,18 @@ async function buildRdelivXml(order) {
     const wcProductId = li.product_id || li.variation_id || null;
     let plunb = '0';
     if (wcProductId) {
+      // Primary lookup: by WC product ID
       const row = await pool.query(
         'SELECT detelina_nb FROM plu_mapping WHERE wc_product_id = $1 LIMIT 1',
         [wcProductId]
+      );
+      if (row.rows[0]) plunb = row.rows[0].detelina_nb;
+    }
+    // Fallback: look up by SKU (PLUNN) if product ID didn't resolve
+    if (plunb === '0' && li.sku) {
+      const row = await pool.query(
+        'SELECT detelina_nb FROM plu_mapping WHERE detelina_nn = $1 LIMIT 1',
+        [li.sku]
       );
       if (row.rows[0]) plunb = row.rows[0].detelina_nb;
     }
