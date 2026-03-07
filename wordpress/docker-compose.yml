@@ -120,6 +120,9 @@ services:
       WEBHOOK_SECRET: ${WEBHOOK_SECRET}
       # How often the polling fallback runs (ms); webhook handles real-time delivery
       ORDER_POLL_INTERVAL_MS: 120000
+      # Default EIK used in RDELIV when the customer has no EIK or company field.
+      # Set to the EIK of a generic "online customer" contractor in Detelina.
+      DEFAULT_CUSTOMER_EIK: ${DEFAULT_CUSTOMER_EIK:-0}
       NODE_ENV: production
     restart: unless-stopped
     networks:

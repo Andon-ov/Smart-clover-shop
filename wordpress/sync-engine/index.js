@@ -45,6 +45,7 @@ const CONFIG = {
     archiveDir: path.resolve('./transfer/archive'), // processed inbound files
   },
   orderPollIntervalMs: parseInt(process.env.ORDER_POLL_INTERVAL_MS || '60000', 10),
+  defaultCustomerEik: process.env.DEFAULT_CUSTOMER_EIK || '0',
   webhook: {
     port:           parseInt(process.env.WEBHOOK_PORT   || '3000', 10),
     secret:         process.env.WEBHOOK_SECRET           || '',
@@ -88,6 +89,19 @@ async function initDb() {
       xml_filename  TEXT,
       exported_at   TIMESTAMPTZ DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS customers (
+      id         SERIAL PRIMARY KEY,
+      eik        TEXT NOT NULL UNIQUE,  -- EIK (unique contractor ID in Detelina)
+      name       TEXT,
+      email      TEXT,
+      phone      TEXT,
+      vat        TEXT,
+      town       TEXT,
+      addr       TEXT,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS customers_email_idx ON customers (LOWER(email));
   `);
   log('Database schema ready.');
 }
@@ -258,6 +272,36 @@ async function processPossales(parsed, filename) {
   }
 }
 
+// ─── CUSTOMERS processor ──────────────────────────────────────────────────────
+
+async function processCustomers(parsed, filename) {
+  const items = parsed.CUSTOMERS && parsed.CUSTOMERS.CUSTOMER;
+  if (!items) { log(`No CUSTOMER entries in ${filename}`, 'WARN'); return; }
+  const list = Array.isArray(items) ? items : [items];
+
+  let upserted = 0;
+  for (const c of list) {
+    const eik = (c.EIK || '').trim();
+    if (!eik) continue;
+    await pool.query(
+      `INSERT INTO customers (eik, name, email, phone, vat, town, addr)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (eik) DO UPDATE SET
+         name       = EXCLUDED.name,
+         email      = EXCLUDED.email,
+         phone      = EXCLUDED.phone,
+         vat        = EXCLUDED.vat,
+         town       = EXCLUDED.town,
+         addr       = EXCLUDED.addr,
+         updated_at = NOW()`,
+      [eik, c.NAME || null, c.EMAIL || null, c.PHONE || null,
+       c.VAT || null, c.TOWN || null, c.ADDR || null]
+    );
+    upserted++;
+  }
+  log(`Customers: upserted ${upserted} contractors from ${filename}`);
+}
+
 // ─── Inbound file dispatcher ───────────────────────────────────────────────────
 
 async function handleInboundFile(filePath) {
@@ -303,8 +347,10 @@ async function handleInboundFile(filePath) {
       await processPludata(parsed, filename);
     } else if (docType === 'POSSALES') {
       await processPossales(parsed, filename);
+    } else if (docType === 'CUSTOMERS') {
+      await processCustomers(parsed, filename);
     } else {
-      log(`Unknown document type "${docType}" in ${filename} – skipping.`, 'WARN');
+      log(`Unknown document type "${docType}" in ${filename} - skipping.`, 'WARN');
     }
 
     // Record as processed
@@ -338,7 +384,7 @@ function formatTime(d) {
  * Build a RDELIV XML string (windows-1251 declared, but stored as UTF-8 bytes
  * – iconv-lite encodes before writing).
  */
-function buildRdelivXml(order) {
+async function buildRdelivXml(order) {
   const now = new Date();
   const items = (order.line_items || []).map(li => {
     const plunb = li.meta_data
@@ -356,10 +402,27 @@ function buildRdelivXml(order) {
   }).join('');
 
   const billing = order.billing || {};
-  const eik     = (order.meta_data || []).find(m => m.key === '_billing_eik');
-  const seik    = eik ? eik.value : (billing.company || '0');
 
-  return `<?xml version="1.0" encoding="WINDOWS-1251"?>\n<RDELIV>\n  <REQD>\n    <TYP>1</TYP>\n    <SEIK>${seik}</SEIK>\n    <DNMB>${order.id}</DNMB>\n    <CMNT>WooCommerce order #${order.id} – ${billing.first_name || ''} ${billing.last_name || ''}</CMNT>\n    <DDATE>${formatDate(now)}</DDATE>\n    <DTIME>${formatTime(now)}</DTIME>\n    <STORG>1</STORG>\n    <PLUES>${items}\n    </PLUES>\n  </REQD>\n</RDELIV>`;
+  // 1. Explicit EIK field on the order (custom checkout field)
+  const eikMeta = (order.meta_data || []).find(m => m.key === '_billing_eik');
+  let seik = eikMeta ? eikMeta.value : null;
+
+  // 2. Look up by customer email in the contractors table (from CUSTOMERS export)
+  if (!seik && billing.email) {
+    const row = await pool.query(
+      'SELECT eik FROM customers WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [billing.email]
+    );
+    if (row.rows[0]) seik = row.rows[0].eik;
+  }
+
+  // 3. Fall back to company field, then to configurable default
+  if (!seik) seik = billing.company || CONFIG.defaultCustomerEik;
+
+  // Use simple hyphen in comment to avoid win1251 encoding issues with en-dash
+  const cmnt = `WooCommerce order #${order.id} - ${billing.first_name || ''} ${billing.last_name || ''}`.trim();
+
+  return `<?xml version="1.0" encoding="WINDOWS-1251"?>\n<RDELIV>\n  <REQD>\n    <TYP>1</TYP>\n    <SEIK>${seik}</SEIK>\n    <DNMB>${order.id}</DNMB>\n    <CMNT>${cmnt}</CMNT>\n    <DDATE>${formatDate(now)}</DDATE>\n    <DTIME>${formatTime(now)}</DTIME>\n    <STORG>1</STORG>\n    <PLUES>${items}\n    </PLUES>\n  </REQD>\n</RDELIV>`;
 }
 
 /**
@@ -381,7 +444,7 @@ async function exportOrder(order) {
     return;
   }
 
-  const xmlContent = buildRdelivXml(order);
+  const xmlContent = await buildRdelivXml(order);
   const encoded    = iconv.encode(xmlContent, 'win1251');
 
   const ts      = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 15);
