@@ -287,7 +287,7 @@ async function handleInboundFile(filePath) {
 
   let xmlString, parsed, docType;
   try {
-    xmlString = rawBuffer.toString('ascii').includes('windows-1251')
+    xmlString = /windows-1251/i.test(rawBuffer.toString('ascii', 0, 500))
       ? iconv.decode(rawBuffer, 'win1251')
       : rawBuffer.toString('utf8');
     parsed = await parseXml(xmlString);
