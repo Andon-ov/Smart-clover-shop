@@ -358,9 +358,10 @@ async function handleInboundFile(filePath) {
       log(`Unknown document type "${docType}" in ${filename} - skipping.`, 'WARN');
     }
 
-    // Record as processed
+    // Record as processed (ON CONFLICT handles identical files uploaded multiple times)
     await pool.query(
-      'INSERT INTO processed_files (filename, sha256, doc_type) VALUES ($1, $2, $3)',
+      `INSERT INTO processed_files (filename, sha256, doc_type) VALUES ($1, $2, $3)
+       ON CONFLICT (sha256) DO NOTHING`,
       [filename, hash, docType]
     );
     archiveFile(filePath);
@@ -391,11 +392,20 @@ function formatTime(d) {
  */
 async function buildRdelivXml(order) {
   const now = new Date();
-  const items = (order.line_items || []).map(li => {
-    const plunb = li.meta_data
-      ? (li.meta_data.find(m => m.key === '_detelina_nb') || {}).value || '0'
-      : '0';
-    return `
+
+  // Build PLU lines – look up detelina_nb from plu_mapping using the WC product ID
+  const itemLines = [];
+  for (const li of (order.line_items || [])) {
+    const wcProductId = li.product_id || li.variation_id || null;
+    let plunb = '0';
+    if (wcProductId) {
+      const row = await pool.query(
+        'SELECT detelina_nb FROM plu_mapping WHERE wc_product_id = $1 LIMIT 1',
+        [wcProductId]
+      );
+      if (row.rows[0]) plunb = row.rows[0].detelina_nb;
+    }
+    itemLines.push(`
     <PLU>
       <PLUNB>${plunb}</PLUNB>
       <PLUNN>${li.sku || ''}</PLUNN>
@@ -403,8 +413,9 @@ async function buildRdelivXml(order) {
       <PRC>${parseFloat(li.price).toFixed(2)}</PRC>
       <CURR>BGN</CURR>
       <PCMNT></PCMNT>
-    </PLU>`;
-  }).join('');
+    </PLU>`);
+  }
+  const items = itemLines.join('');
 
   const billing = order.billing || {};
 
