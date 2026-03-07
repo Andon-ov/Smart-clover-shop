@@ -457,7 +457,7 @@ async function buildRdelivXml(order) {
   // Use simple hyphen in comment to avoid win1251 encoding issues with en-dash
   const cmnt = escapeXml(`WooCommerce order #${order.id} - ${billing.first_name || ''} ${billing.last_name || ''}`.trim());
 
-  return `<?xml version="1.0" encoding="WINDOWS-1251"?>\n<RDELIV>\n  <REQD>\n    <TYP>1</TYP>\n    <SEIK>${escapeXml(seik)}</SEIK>\n    <DNMB>${order.id}</DNMB>\n    <CMNT>${cmnt}</CMNT>\n    <DDATE>${formatDate(now)}</DDATE>\n    <DTIME>${formatTime(now)}</DTIME>\n    <STORG>1</STORG>\n    <PLUES>${items}\n    </PLUES>\n  </REQD>\n</RDELIV>`;
+  return `<?xml version="1.0" encoding="WINDOWS-1251"?>\n<RDELIV>\n  <REQD>\n    <TYP>2</TYP>\n    <SEIK>${escapeXml(seik)}</SEIK>\n    <DNMB>${order.id}</DNMB>\n    <CMNT>${cmnt}</CMNT>\n    <DDATE>${formatDate(now)}</DDATE>\n    <DTIME>${formatTime(now)}</DTIME>\n    <STORG>1</STORG>\n    <PLUES>${items}\n    </PLUES>\n  </REQD>\n</RDELIV>`;
 }
 
 /**
@@ -466,14 +466,6 @@ async function buildRdelivXml(order) {
  * Idempotent – silently skips orders that have already been exported.
  */
 async function exportOrder(order) {
-  const row = await pool.query(
-    'SELECT id FROM exported_orders WHERE wc_order_id = $1', [order.id]
-  );
-  if (row.rows.length > 0) {
-    log(`Order #${order.id} already exported – skipping.`);
-    return;
-  }
-
   if (!order.line_items || order.line_items.length === 0) {
     log(`Order #${order.id} has no line items – skipping.`, 'WARN');
     return;
@@ -493,10 +485,22 @@ async function exportOrder(order) {
   fs.writeFileSync(tmpPath, encoded);
   fs.renameSync(tmpPath, xmlPath);
 
-  await pool.query(
-    'INSERT INTO exported_orders (wc_order_id, xml_filename) VALUES ($1, $2)',
+  // Atomic INSERT – if another concurrent call (webhook + poll race) already
+  // inserted this order, ON CONFLICT returns 0 rows and we clean up the file.
+  const ins = await pool.query(
+    `INSERT INTO exported_orders (wc_order_id, xml_filename)
+     VALUES ($1, $2)
+     ON CONFLICT (wc_order_id) DO NOTHING
+     RETURNING id`,
     [order.id, xmlName]
   );
+
+  if (ins.rows.length === 0) {
+    // Race condition: another process already exported this order.
+    log(`Order #${order.id} already exported (race condition) – removing duplicate file.`, 'WARN');
+    try { fs.unlinkSync(xmlPath); } catch (_) {}
+    return;
+  }
 
   // Move the WooCommerce order to "on-hold" so it is not re-exported
   // by the polling fallback.

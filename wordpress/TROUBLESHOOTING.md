@@ -441,6 +441,93 @@ for (let attempt = 1; attempt <= 10; attempt++) {
 
 ---
 
+## 15. `<TYP>1</TYP>` — заявката отива в грешен модул на Detelina
+
+### Симптом
+Заявката се импортира успешно, но не се вижда в очаквания модул. Или Detelina връща грешка за неправилен тип документ.
+
+### Причина
+- **TYP=1** = Заявка за доставка (incoming stock от доставчик) → модул "Заявки за доставка"
+- **TYP=2** = Поръчка / Заявка за изписване (клиентска поръчка) → модул "Поръчки"
+
+Онлайн поръчките от WooCommerce са клиентски поръчки за **изписване** — трябва **TYP=2**.
+
+### Решение
+В `buildRdelivXml()` в `sync-engine/index.js`:
+```javascript
+// ГРЕШНО — доставка (incoming stock):
+`<TYP>1</TYP>`
+
+// ПРАВИЛНО — клиентска поръчка (outgoing sales):
+`<TYP>2</TYP>`
+```
+
+---
+
+## 16. Два RDELIV файла за една поръчка (race condition)
+
+### Симптом
+В `transfer/` се появяват два файла за една и съща поръчка с различни timestamps:
+```
+EboIn_Order3248_20260307154153.xml
+EboIn_Order3248_20260307154353.xml
+```
+Detelina обработва първия, вторият остава или предизвиква duplicate грешка.
+
+### Причина
+`exportOrder()` проверяваше за дубликат с `SELECT` преди `INSERT`. При едновременно изпълнение от webhook и poll loop — и двата виждат "не е изнесена" и генерират файл.
+
+### Решение
+Използвай `INSERT ... ON CONFLICT (wc_order_id) DO NOTHING RETURNING id`. Ако `RETURNING` не върне ред — друг процес вече е изнесъл поръчката:
+```javascript
+const ins = await pool.query(
+  `INSERT INTO exported_orders (wc_order_id, xml_filename)
+   VALUES ($1, $2)
+   ON CONFLICT (wc_order_id) DO NOTHING
+   RETURNING id`,
+  [order.id, xmlName]
+);
+if (ins.rows.length === 0) {
+  // Race condition — изтрий дублирания файл
+  fs.unlinkSync(xmlPath);
+  return;
+}
+```
+
+---
+
+## 17. `<SEIK>0</SEIK>` — контрагент не съществува в Detelina
+
+### Симптом
+Detelina лог показва:
+```
+[PluAddData]Plu not found in DB.
+```
+или файлът се преименува на `.err` с грешка "Contragent does not exist".
+
+### Причина
+Полето `<SEIK>` трябва да съдържа реален ЕИК на контрагент, **регистриран в Detelina**. Ако клиентът няма ЕИК и `DEFAULT_CUSTOMER_EIK` е `0` (стойността по подразбиране) — Detelina не може да намери контрагент с ЕИК `0` и отхвърля файла.
+
+### Решение
+Създай generic контрагент "Онлайн клиент" в Detelina с произволен ЕИК (напр. `1111111111`) и го постави в `.env` на сървъра:
+```bash
+# В ~/GitHub/Smart-clover-shop/wordpress/.env добави:
+DEFAULT_CUSTOMER_EIK=1111111111
+```
+
+После рестартирай sync engine:
+```bash
+docker compose up -d --no-deps --force-recreate sync_engine
+```
+
+**Hierarchy на SEIK lookup** в `buildRdelivXml()`:
+1. Мета поле `_billing_eik` на поръчката (custom checkout field)
+2. Email lookup в таблица `customers` (от CUSTOMERS файл на Detelina)
+3. `billing.company` поле
+4. `DEFAULT_CUSTOMER_EIK` от `.env`
+
+---
+
 ## Бързо ре-деплойване след `git pull`
 
 ```bash
