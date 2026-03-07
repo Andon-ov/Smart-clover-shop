@@ -148,7 +148,10 @@ function wcApi(method, endpoint, data = null) {
 
 async function logError(filename, err) {
   const msg = err && err.message ? err.message : String(err);
-  log(`ERROR [${filename}]: ${msg}`, 'ERROR');
+  const wcErr = err && err.response && err.response.data
+    ? JSON.stringify(err.response.data)
+    : null;
+  log(`ERROR [${filename}]: ${msg}${wcErr ? ` | WC: ${wcErr}` : ''}`, 'ERROR');
   try {
     await pool.query(
       'INSERT INTO sync_errors (filename, error_msg) VALUES ($1, $2)',
@@ -227,24 +230,29 @@ async function processPludata(parsed, filename) {
       ...(categoryId ? { categories: [{ id: categoryId }] } : {}),
     };
 
-    if (wcId) {
-      // Update existing product
-      await wcApi('put', `products/${wcId}`, productData);
-      log(`Updated WC product #${wcId} for PLU ${plunb}`);
-    } else {
-      // Create new product and record mapping
-      const created = await wcApi('post', 'products', productData);
-      const newWcId = created.data.id;
-      await pool.query(
-        `INSERT INTO plu_mapping (detelina_nb, detelina_nn, wc_product_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (detelina_nb) DO UPDATE
-           SET detelina_nn   = EXCLUDED.detelina_nn,
-               wc_product_id = EXCLUDED.wc_product_id,
-               updated_at    = NOW()`,
-        [plunb, plu.PLUNN || null, newWcId]
-      );
-      log(`Created WC product #${newWcId} for PLU ${plunb}`);
+    try {
+      if (wcId) {
+        // Update existing product
+        await wcApi('put', `products/${wcId}`, productData);
+        log(`Updated WC product #${wcId} for PLU ${plunb}`);
+      } else {
+        // Create new product and record mapping
+        const created = await wcApi('post', 'products', productData);
+        const newWcId = created.data.id;
+        await pool.query(
+          `INSERT INTO plu_mapping (detelina_nb, detelina_nn, wc_product_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (detelina_nb) DO UPDATE
+             SET detelina_nn   = EXCLUDED.detelina_nn,
+                 wc_product_id = EXCLUDED.wc_product_id,
+                 updated_at    = NOW()`,
+          [plunb, plu.PLUNN || null, newWcId]
+        );
+        log(`Created WC product #${newWcId} for PLU ${plunb}`);
+      }
+    } catch (err) {
+      const wcErr = err.response && err.response.data ? JSON.stringify(err.response.data) : err.message;
+      log(`Failed PLU ${plunb} (WC#${wcId}): ${wcErr}`, 'WARN');
     }
   }
 }
