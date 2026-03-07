@@ -206,7 +206,7 @@ async function processPludata(parsed, filename) {
     // Resolve deepest group name for WC category
     let grp = plu.GRP;
     while (grp && grp.GRP) grp = grp.GRP;
-    const categoryName = grp && grp.GNМ ? grp.GNМ : null;
+    const categoryName = grp && (grp.GNM || grp.GNМ) ? (grp.GNM || grp.GNМ) : null;
     const categoryId   = categoryName ? await ensureWcCategory(categoryName) : null;
 
     // Look up existing WC product via our mapping table
