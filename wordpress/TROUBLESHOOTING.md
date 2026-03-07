@@ -286,6 +286,161 @@ docker compose logs -f sync_engine
 
 ---
 
+## 10. Дублирани файлове предизвикват crash (duplicate SHA256)
+
+### Симптом
+```
+sync_engine | ERROR: duplicate key value violates unique constraint "processed_files_sha256_key"
+```
+Sync engine crash-ва и спира да обработва файлове.
+
+### Причина
+Ако Detelina качи идентичен файл два пъти (или файл бъде копиран ръчно обратно от archive), SHA-256 хешът вече съществува в `processed_files`. `INSERT` без `ON CONFLICT` хвърля грешка.
+
+### Решение
+Добави `ON CONFLICT (sha256) DO NOTHING` на INSERT-а:
+```javascript
+await pool.query(
+  `INSERT INTO processed_files (filename, sha256, doc_type) VALUES ($1, $2, $3)
+   ON CONFLICT (sha256) DO NOTHING`,
+  [filename, hash, docType]
+);
+```
+Файлът се архивира без грешка — логва се `Skipping duplicate file:`.
+
+---
+
+## 11. PLUNB=0 в генерирания RDELIV XML
+
+### Симптом
+```xml
+<PLUNB>0</PLUNB>
+```
+Detelina не може да обработи заявката, защото артикул с вътрешен код `0` не съществува.
+
+### Причина
+`buildRdelivXml()` търсеше `detelina_nb` в `plu_mapping` само по `wc_product_id`. Ако продуктът е бил добавен директно в WooCommerce (не чрез PLUDATA sync) или `wc_product_id` не съвпада — `PLUNB` оставаше `0`.
+
+Допълнително: `plunb` беше string `'0'`, а PostgreSQL връща INTEGER. Сравнението `0 === '0'` е `false` в JavaScript, което пречеше на SKU fallback-а.
+
+### Решение
+Две промени:
+1. **SKU fallback:** ако primary lookup по `wc_product_id` не намери резултат, търси по `detelina_nn` (SKU):
+```javascript
+// Primary lookup
+const row = await pool.query(
+  'SELECT detelina_nb FROM plu_mapping WHERE wc_product_id = $1 LIMIT 1',
+  [wcProductId]
+);
+if (row.rows[0]) plunb = Number(row.rows[0].detelina_nb) || 0;
+
+// SKU fallback
+if (plunb === 0 && li.sku) {
+  const row = await pool.query(
+    'SELECT detelina_nb FROM plu_mapping WHERE detelina_nn = $1 LIMIT 1',
+    [li.sku]
+  );
+  if (row.rows[0]) plunb = Number(row.rows[0].detelina_nb) || 0;
+}
+```
+
+2. **Type fix:** `plunb` е число (не string) за коректно `=== 0` сравнение.
+
+### Диагноза
+```bash
+# Провери дали продуктът е в plu_mapping
+docker exec clvr_db_sync psql -U sync_user -d sync_bridge \
+  -c "SELECT detelina_nb, detelina_nn, wc_product_id FROM plu_mapping WHERE detelina_nn = 'N5620';"
+
+# Провери какъв SKU има продуктът в WooCommerce
+docker exec clvr_db_sync psql -U sync_user -d sync_bridge \
+  -c "SELECT detelina_nb, detelina_nn, wc_product_id FROM plu_mapping WHERE wc_product_id = 1931;"
+```
+
+---
+
+## 12. Липсваща `escapeXml()` — невалиден XML при специални символи
+
+### Симптом
+Detelina не може да parse-не RDELIV файла. Грешка при import или файлът се игнорира без обяснение.
+
+### Причина
+Динамичните стойности в XML-а (`SEIK`, `CMNT`, `PLUNN`) се инжектираха директно без escaping. Ако съдържат `&`, `<`, `>`, `"` или `'` — XML-ът ставаше невалиден.
+
+Примери:
+- Фирма: `Иванов & Ко` → `<SEIK>Иванов & Ко</SEIK>` (невалиден XML)
+- Коментар: `Клиент <важен>` → `<CMNT>Клиент <важен></CMNT>` (невалиден XML)
+
+### Решение
+Добави `escapeXml()` функция (като в работещия `app.js`) и я използвай за всички динамични стойности:
+```javascript
+function escapeXml(text) {
+  if (!text) return '';
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+  return String(text).replace(/[&<>"']/g, m => map[m]);
+}
+
+// Използване в buildRdelivXml():
+`<SEIK>${escapeXml(seik)}</SEIK>`
+`<CMNT>${escapeXml(cmnt)}</CMNT>`
+`<PLUNN>${escapeXml(li.sku || '')}</PLUNN>`
+```
+
+---
+
+## 13. Polling цикълът не логва нищо — невъзможно е да се debug-не
+
+### Симптом
+`docker logs clvr_sync_engine` показва само startup реда. Няма индикация дали polling-ът работи, колко поръчки е намерил, или дали въобще се свързва с WooCommerce.
+
+### Причина
+`exportPendingOrders()` не логваше нито начало на цикъл, нито броя на намерените поръчки, нито "празен" резултат.
+
+### Решение
+Добави logging в poll цикъла:
+```javascript
+async function exportPendingOrders() {
+  log('Polling WooCommerce for pending orders...');
+  // ... fetch orders ...
+  const orders = ordersRes.data || [];
+  if (orders.length === 0) {
+    log('No pending orders found.');
+    return;
+  }
+  log(`Found ${orders.length} pending order(s) to export.`);
+  // ... export loop ...
+}
+```
+
+---
+
+## 14. Sync engine продължава без DB — тих crash по-късно
+
+### Симптом
+Sync engine стартира, показва 10× `DB not ready` warnings, после хвърля неуловена грешка при `initDb()` и умира. Docker го рестартира и цикълът се повтаря.
+
+### Причина
+DB retry loop-ът нямаше `process.exit(1)` при 10-тия неуспех — кодът просто продължаваше напред.
+
+### Решение
+```javascript
+for (let attempt = 1; attempt <= 10; attempt++) {
+  try {
+    await pool.query('SELECT 1');
+    break;
+  } catch (err) {
+    log(`DB not ready (attempt ${attempt}/10): ${err.message}`, 'WARN');
+    if (attempt === 10) {
+      log('Could not connect to database after 10 attempts – exiting.', 'ERROR');
+      process.exit(1);
+    }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+}
+```
+
+---
+
 ## Бързо ре-деплойване след `git pull`
 
 ```bash
