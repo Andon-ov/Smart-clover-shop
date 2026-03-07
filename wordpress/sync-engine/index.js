@@ -40,8 +40,8 @@ const CONFIG = {
     consumerSecret: process.env.WP_CONSUMER_SECRET  || '',
   },
   transfer: {
-    inDir:      path.resolve('./transfer'),       // FTP root – Detelina drops files here
-    outDir:     path.resolve('./transfer/out'),    // RDELIV files for Detelina to pick up
+    inDir:      path.resolve('./transfer'),         // FTP root – shared with Detelina
+    outDir:     path.resolve('./transfer'),         // RDELIV files written to same root
     archiveDir: path.resolve('./transfer/archive'), // processed inbound files
   },
   orderPollIntervalMs: parseInt(process.env.ORDER_POLL_INTERVAL_MS || '60000', 10),
@@ -308,6 +308,11 @@ async function handleInboundFile(filePath) {
   if (!/\.(xml|tm~)$/i.test(filePath)) return; // accept .xml and Detelina .tm~ uploads
 
   const filename = path.basename(filePath);
+
+  // Skip our own outbound RDELIV exports (EboIn_Order*.xml) – they live in the
+  // same FTP root but are meant for Detelina to pick up, not to be re-imported.
+  if (/^EboIn_/i.test(filename)) return;
+
   log(`Processing inbound: ${filename}`);
 
   let rawBuffer;
@@ -622,8 +627,7 @@ async function main() {
   // Watch inbound FTP directory (root), ignore out/ and archive/ subdirs
   const watcher = chokidar.watch(CONFIG.transfer.inDir, {
     ignored: [
-      /(^|[/\\])\../,                           // hidden files
-      path.join(CONFIG.transfer.outDir, '**'),    // ignore out/ subdir
+      /(^|[/\\])\../,                             // hidden files
       path.join(CONFIG.transfer.archiveDir, '**'), // ignore archive/ subdir
     ],
     depth:      0,    // only watch root level, not subdirectories
