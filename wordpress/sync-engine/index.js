@@ -261,7 +261,7 @@ async function processPossales(parsed, filename) {
 // ─── Inbound file dispatcher ───────────────────────────────────────────────────
 
 async function handleInboundFile(filePath) {
-  if (!/\.xml$/i.test(filePath)) return; // ignore .err / .proc / .tmp
+  if (!/\.(xml|tm~)$/i.test(filePath)) return; // accept .xml and Detelina .tm~ uploads
 
   const filename = path.basename(filePath);
   log(`Processing inbound: ${filename}`);
