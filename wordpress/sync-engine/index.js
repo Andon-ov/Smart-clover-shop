@@ -116,6 +116,13 @@ function sha256(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
+/** Escape XML special characters (same logic as app.js escapeXml). */
+function escapeXml(text) {
+  if (!text) return '';
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' };
+  return String(text).replace(/[&<>"']/g, m => map[m]);
+}
+
 /** Read a file and auto-detect Windows-1251 vs UTF-8 encoding. */
 function readXmlFile(filePath) {
   const raw = fs.readFileSync(filePath);
@@ -397,27 +404,30 @@ async function buildRdelivXml(order) {
   const itemLines = [];
   for (const li of (order.line_items || [])) {
     const wcProductId = li.product_id || li.variation_id || null;
-    let plunb = '0';
+    let plunb = 0;
     if (wcProductId) {
       // Primary lookup: by WC product ID
       const row = await pool.query(
         'SELECT detelina_nb FROM plu_mapping WHERE wc_product_id = $1 LIMIT 1',
         [wcProductId]
       );
-      if (row.rows[0]) plunb = row.rows[0].detelina_nb;
+      if (row.rows[0]) plunb = Number(row.rows[0].detelina_nb) || 0;
     }
     // Fallback: look up by SKU (PLUNN) if product ID didn't resolve
-    if (plunb === '0' && li.sku) {
+    if (plunb === 0 && li.sku) {
       const row = await pool.query(
         'SELECT detelina_nb FROM plu_mapping WHERE detelina_nn = $1 LIMIT 1',
         [li.sku]
       );
-      if (row.rows[0]) plunb = row.rows[0].detelina_nb;
+      if (row.rows[0]) plunb = Number(row.rows[0].detelina_nb) || 0;
+    }
+    if (plunb === 0) {
+      log(`Order #${order.id}: product WC#${wcProductId} SKU=${li.sku} not found in plu_mapping – PLUNB=0`, 'WARN');
     }
     itemLines.push(`
     <PLU>
       <PLUNB>${plunb}</PLUNB>
-      <PLUNN>${li.sku || ''}</PLUNN>
+      <PLUNN>${escapeXml(li.sku || '')}</PLUNN>
       <QTY>${parseFloat(li.quantity).toFixed(3)}</QTY>
       <PRC>${parseFloat(li.price).toFixed(2)}</PRC>
       <CURR>BGN</CURR>
@@ -445,9 +455,9 @@ async function buildRdelivXml(order) {
   if (!seik) seik = billing.company || CONFIG.defaultCustomerEik;
 
   // Use simple hyphen in comment to avoid win1251 encoding issues with en-dash
-  const cmnt = `WooCommerce order #${order.id} - ${billing.first_name || ''} ${billing.last_name || ''}`.trim();
+  const cmnt = escapeXml(`WooCommerce order #${order.id} - ${billing.first_name || ''} ${billing.last_name || ''}`.trim());
 
-  return `<?xml version="1.0" encoding="WINDOWS-1251"?>\n<RDELIV>\n  <REQD>\n    <TYP>1</TYP>\n    <SEIK>${seik}</SEIK>\n    <DNMB>${order.id}</DNMB>\n    <CMNT>${cmnt}</CMNT>\n    <DDATE>${formatDate(now)}</DDATE>\n    <DTIME>${formatTime(now)}</DTIME>\n    <STORG>1</STORG>\n    <PLUES>${items}\n    </PLUES>\n  </REQD>\n</RDELIV>`;
+  return `<?xml version="1.0" encoding="WINDOWS-1251"?>\n<RDELIV>\n  <REQD>\n    <TYP>1</TYP>\n    <SEIK>${escapeXml(seik)}</SEIK>\n    <DNMB>${order.id}</DNMB>\n    <CMNT>${cmnt}</CMNT>\n    <DDATE>${formatDate(now)}</DDATE>\n    <DTIME>${formatTime(now)}</DTIME>\n    <STORG>1</STORG>\n    <PLUES>${items}\n    </PLUES>\n  </REQD>\n</RDELIV>`;
 }
 
 /**
@@ -497,6 +507,7 @@ async function exportOrder(order) {
 
 /** Polling fallback – catches any orders missed by the webhook (e.g. downtime). */
 async function exportPendingOrders() {
+  log('Polling WooCommerce for pending orders...');
   let ordersRes;
   try {
     ordersRes = await wcApi('get', 'orders?status=processing&per_page=50');
@@ -505,7 +516,14 @@ async function exportPendingOrders() {
     return;
   }
 
-  for (const order of ordersRes.data || []) {
+  const orders = ordersRes.data || [];
+  if (orders.length === 0) {
+    log('No pending orders found.');
+    return;
+  }
+  log(`Found ${orders.length} pending order(s) to export.`);
+
+  for (const order of orders) {
     try {
       await exportOrder(order);
     } catch (err) {
@@ -638,6 +656,10 @@ async function main() {
       break;
     } catch (err) {
       log(`DB not ready (attempt ${attempt}/10): ${err.message}`, 'WARN');
+      if (attempt === 10) {
+        log('Could not connect to database after 10 attempts – exiting.', 'ERROR');
+        process.exit(1);
+      }
       await new Promise(r => setTimeout(r, 3000));
     }
   }
