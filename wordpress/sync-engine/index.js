@@ -116,12 +116,11 @@ async function parseXml(xmlString) {
 }
 
 function wcApi(method, endpoint, data = null) {
-  const url  = `${CONFIG.wp.apiUrl}/${endpoint}`;
-  const auth = {
-    username: CONFIG.wp.consumerKey,
-    password: CONFIG.wp.consumerSecret,
-  };
-  return axios({ method, url, auth, data });
+  // Use query-parameter auth instead of Basic Auth because Apache (WordPress
+  // Docker image) strips the Authorization header before PHP sees it.
+  const sep = endpoint.includes('?') ? '&' : '?';
+  const url  = `${CONFIG.wp.apiUrl}/${endpoint}${sep}consumer_key=${encodeURIComponent(CONFIG.wp.consumerKey)}&consumer_secret=${encodeURIComponent(CONFIG.wp.consumerSecret)}`;
+  return axios({ method, url, data });
 }
 
 async function logError(filename, err) {
