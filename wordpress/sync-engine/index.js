@@ -457,7 +457,7 @@ async function buildRdelivXml(order) {
   // Use simple hyphen in comment to avoid win1251 encoding issues with en-dash
   const cmnt = escapeXml(`WooCommerce order #${order.id} - ${billing.first_name || ''} ${billing.last_name || ''}`.trim());
 
-  return `<?xml version="1.0" encoding="WINDOWS-1251"?>\n<RDELIV>\n  <REQD>\n    <TYP>2</TYP>\n    <SEIK>${escapeXml(seik)}</SEIK>\n    <DNMB>${order.id}</DNMB>\n    <CMNT>${cmnt}</CMNT>\n    <DDATE>${formatDate(now)}</DDATE>\n    <DTIME>${formatTime(now)}</DTIME>\n    <STORG>1</STORG>\n    <PLUES>${items}\n    </PLUES>\n  </REQD>\n</RDELIV>`;
+  return `<?xml version="1.0" encoding="WINDOWS-1251"?>\n<RDELIV>\n  <REQD>\n    <TYP>1</TYP>\n    <SEIK>${escapeXml(seik)}</SEIK>\n    <DNMB>${order.id}</DNMB>\n    <CMNT>${cmnt}</CMNT>\n    <DDATE>${formatDate(now)}</DDATE>\n    <DTIME>${formatTime(now)}</DTIME>\n    <STORG>1</STORG>\n    <PLUES>${items}\n    </PLUES>\n  </REQD>\n</RDELIV>`;
 }
 
 /**
