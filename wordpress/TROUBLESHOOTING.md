@@ -182,6 +182,110 @@ chmod 777 transfer/ transfer/archive/ transfer/out/ transfer/in/
 
 ---
 
+## 7. RDELIV генериран с `<SEIK>0</SEIK>`
+
+### Симптом
+Генерираният XML файл за поръчка съдържа `<SEIK>0</SEIK>`. Detelina не може да обработи заявката защото контрагентът с ЕИК `0` не съществува в системата.
+
+```xml
+<SEIK>0</SEIK>
+```
+
+### Причина
+Кодът търсеше ЕИК само в:
+1. Мета поле `_billing_eik` на поръчката (попълва се ако има специален checkout field)
+2. `billing.company` поле (попълва се само ако клиентът е въвел фирма)
+
+При поръчка от физическо лице без фирма — нито едното е налично → `SEIK=0`.
+
+### Решение
+Три нива на fallback в `buildRdelivXml()`:
+
+1. **Мета поле `_billing_eik`** на поръчката (custom checkout field)
+2. **Търсене по email** в таблицата `customers` — попълва се автоматично при обработка на `CUSTOMERS` файл от Detelina
+3. **`DEFAULT_CUSTOMER_EIK`** env var — ЕИК на generic контрагент в Detelina за онлайн клиенти без ЕИК
+
+```bash
+# В .env на сървъра добави:
+DEFAULT_CUSTOMER_EIK=123456789   # ЕИК на "Онлайн клиент" контрагент в Detelina
+```
+
+```yaml
+# docker-compose.yml вече го предава:
+DEFAULT_CUSTOMER_EIK: ${DEFAULT_CUSTOMER_EIK:-0}
+```
+
+### CUSTOMERS файл — как работи процесът
+Detelina изнася файл с контрагенти (`CUSTOMERS` XML формат). Sync engine-ът го обработва и записва `EIK` + `EMAIL` в PostgreSQL таблица `customers`. При следваща поръчка — търси ЕИК по email на клиента.
+
+**Важно:** Контрагентът трябва да има попълнен `EMAIL` в Detelina за да работи автоматичното търсене. Ако нямат email в системата → използва се `DEFAULT_CUSTOMER_EIK`.
+
+### Диагноза — проверка дали клиентът е в базата
+```bash
+docker exec clvr_db_sync psql -U sync_user -d sync_db \
+  -c "SELECT eik, name, email FROM customers WHERE LOWER(email) = 'email@example.com';"
+```
+
+---
+
+## 8. `?` вместо специален символ в CMNT полето на RDELIV
+
+### Симптом
+```xml
+<CMNT>WooCommerce order #3246 ? Andon Andonov</CMNT>
+```
+Въпросителен знак вместо тире между номера на поръчката и името.
+
+### Причина
+В кода беше използвано Unicode en-dash (`–`, U+2013). Когато `iconv-lite` encode-ва текста към `windows-1251`, символът U+2013 не съществува в тази кодова таблица и се заменя с `?`.
+
+### Решение
+Замени en-dash с обикновено ASCII тире `-`:
+```javascript
+// ГРЕШНО (en-dash не е в windows-1251):
+`WooCommerce order #${order.id} – ${name}`
+
+// ПРАВИЛНО (обикновено ASCII тире):
+`WooCommerce order #${order.id} - ${name}`
+```
+
+**Правило:** В низове, които се encode-ват към `windows-1251`, използвай само ASCII символи или кирилица. Всички типографски символи (em-dash, en-dash, smart quotes, ellipsis…) трябва да се заменят с ASCII еквивалент.
+
+---
+
+## 9. Продуктите пак показват чупена кирилица след encoding fix
+
+### Симптом
+Encoding fix-ът е deploy-нат, контейнерът е рестартиран, но WooCommerce продуктите все още показват `?` вместо кирилица.
+
+### Причина
+Idempotency механизмът. Sync engine пази SHA-256 хеш на всеки обработен файл в таблица `processed_files`. При второ пускане на същия файл — хешът съвпада и файлът се **пропуска**. Счупените данни вече са записани в WooCommerce и не се презаписват.
+
+### Решение
+Изтрий записите от `processed_files` и върни файловете от archive → ще се преработят наново с правилния encoding и ще UPDATE-нат съществуващите продукти (не се дублират — `plu_mapping` пази `wc_product_id`):
+
+```bash
+cd ~/GitHub/Smart-clover-shop/wordpress
+
+# 1. Изчисти историята за обработените файлове
+docker exec clvr_db_sync psql -U sync_user -d sync_db \
+  -c "DELETE FROM processed_files;"
+
+# 2. Върни архивираните файлове обратно в transfer/
+mv transfer/archive/*.xml transfer/ 2>/dev/null
+mv transfer/archive/*.tm~ transfer/ 2>/dev/null
+
+# 3. Провери дали файловете са налице
+ls -la transfer/
+
+# 4. Следи логовете — трябва да видиш "Updated WC product" редове
+docker compose logs -f sync_engine
+```
+
+**Резултат:** Sync engine-ът прави `PUT` (update) към съществуващите WC продукти — имената се оправят без дублиране.
+
+---
+
 ## Бързо ре-деплойване след `git pull`
 
 ```bash
