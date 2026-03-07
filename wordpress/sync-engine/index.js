@@ -226,7 +226,7 @@ async function processPludata(parsed, filename) {
       status:        deleted ? 'trash' : 'publish',
       sku:           String(plu.PLUNN || plunb),
       manage_stock:  true,
-      stock_quantity: Math.max(0, pqtty),
+      stock_quantity: Math.round(Math.max(0, pqtty)),
       ...(categoryId ? { categories: [{ id: categoryId }] } : {}),
     };
 
@@ -283,7 +283,7 @@ async function processPossales(parsed, filename) {
       const prodRes = await wcApi('get', `products/${wcId}`);
       const currentStock = prodRes.data.stock_quantity ?? 0;
 
-      const newStock = Math.max(0, currentStock - qty);
+      const newStock = Math.round(Math.max(0, currentStock - qty));
       await wcApi('put', `products/${wcId}`, { manage_stock: true, stock_quantity: newStock });
       log(`Stock update WC #${wcId} PLU ${plunb}: ${currentStock} → ${newStock}`);
     }
