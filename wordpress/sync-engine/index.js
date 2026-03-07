@@ -559,12 +559,14 @@ async function main() {
   // Watch inbound FTP directory (root), ignore out/ and archive/ subdirs
   const watcher = chokidar.watch(CONFIG.transfer.inDir, {
     ignored: [
-      /(^|[/\\])\../,                          // hidden files
+      /(^|[/\\])\../,                           // hidden files
       path.join(CONFIG.transfer.outDir, '**'),    // ignore out/ subdir
       path.join(CONFIG.transfer.archiveDir, '**'), // ignore archive/ subdir
     ],
-    depth:      0,   // only watch root level, not subdirectories
+    depth:      0,    // only watch root level, not subdirectories
     persistent: true,
+    usePolling: true, // required inside Docker – inotify events are unreliable
+    interval:   3000, // poll every 3 s
     awaitWriteFinish: {
       stabilityThreshold: 2000, // wait 2 s after last write before processing
       pollInterval:       500,
