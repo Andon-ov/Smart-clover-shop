@@ -80,7 +80,7 @@ services:
     container_name: clvr_ftp
     ports:
       - "21:21"
-      - "30000-30009:30000-30009"
+      - "30000-30020:30000-30020"
     volumes:
       - ./transfer:/home/ftpuser/detelina
     environment:
@@ -88,6 +88,7 @@ services:
       FTP_USER_NAME: ${FTP_USER_NAME}
       FTP_USER_PASS: ${FTP_USER_PASS}
       FTP_USER_HOME: /home/ftpuser/detelina
+      PASSIVE_PORT_RANGE: "30000:30020"
     restart: unless-stopped
     networks:
       - ftp_net
