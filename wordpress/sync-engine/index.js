@@ -118,9 +118,11 @@ async function parseXml(xmlString) {
 function wcApi(method, endpoint, data = null) {
   // Use query-parameter auth instead of Basic Auth because Apache (WordPress
   // Docker image) strips the Authorization header before PHP sees it.
+  // WooCommerce only accepts query-param auth over HTTPS, so we also send
+  // X-Forwarded-Proto: https so WordPress treats the internal request as secure.
   const sep = endpoint.includes('?') ? '&' : '?';
   const url  = `${CONFIG.wp.apiUrl}/${endpoint}${sep}consumer_key=${encodeURIComponent(CONFIG.wp.consumerKey)}&consumer_secret=${encodeURIComponent(CONFIG.wp.consumerSecret)}`;
-  return axios({ method, url, data });
+  return axios({ method, url, data, headers: { 'X-Forwarded-Proto': 'https' } });
 }
 
 async function logError(filename, err) {
